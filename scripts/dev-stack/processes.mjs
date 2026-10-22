@@ -1,6 +1,15 @@
 import { spawn } from "node:child_process";
 import { createInterface } from "node:readline";
 import { setTimeout as delay } from "node:timers/promises";
+import { join } from "node:path";
+
+export function startWeb(processes, root, env) {
+  // npm workspaces hoists Vite to the checkout root, while its working
+  // directory must remain apps/web so it loads the web configuration.
+  return processes.start("web", process.execPath,
+    [join(root, "node_modules/vite/bin/vite.js"), "--strictPort"],
+    { cwd: join(root, "apps/web"), env }, true);
+}
 
 export function redact(value, secrets) {
   let result = String(value);
