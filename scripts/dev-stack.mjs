@@ -164,13 +164,16 @@ async function main() {
     await chmod(config.control, 0o600);
     const template = await readFile(join(root, "packages/run-spaceapp/templates/compose.yml"), "utf8");
     await writeFile(join(config.state, "compose.json"), JSON.stringify(composeDocument(config, template), null, 2), { mode: 0o600 });
+    console.log("[dev:stack] Building source packages and installing pinned OpenCode.");
     await build(processes);
     await prepareOpenCode(processes);
     signal.throwIfAborted();
     composeStarted = true;
+    console.log("[dev:stack] Starting PostgreSQL and Temporal.");
     await processes.run("docker:up", "docker", composeArgs(config, "up", "--detach", "--wait", "--wait-timeout", "240"), { cwd: config.state });
     await processes.run("temporal:namespace", "docker", composeArgs(config, "exec", "-T", "temporal", "sh", "-ec",
-      "temporal operator namespace describe --namespace spaceapp-dev --address 127.0.0.1:7233 >/dev/null 2>&1 || temporal operator namespace create --namespace spaceapp-dev --address 127.0.0.1:7233"), { cwd: config.state });
+      "temporal operator namespace describe --namespace spaceapp-dev --address temporal:7233 >/dev/null 2>&1 || temporal operator namespace create --namespace spaceapp-dev --address temporal:7233"), { cwd: config.state });
+    console.log("[dev:stack] Applying migrations and starting source services.");
     const env = sourceEnvironment(config, secrets);
     await mkdir(env.TMPDIR, { recursive: true, mode: 0o700 });
     await processes.run("migrate", process.execPath, ["packages/db/dist/migrate.js"], { cwd: root, env });
@@ -181,6 +184,7 @@ async function main() {
     processes.start("api", process.execPath, ["node_modules/tsx/dist/cli.mjs", "watch", "apps/api/src/server.ts"], { cwd: root, env }, true);
     processes.start("web", process.execPath, ["node_modules/vite/bin/vite.js", "--strictPort"], { cwd: join(root, "apps/web"), env }, true);
     await writeFile(join(config.state, "processes.json"), JSON.stringify([...processes.children].filter(r => !r.exited).map(r => ({ name: r.name, pid: r.child.pid }))), { mode: 0o600 });
+    console.log("[dev:stack] Waiting for database, worker and CLI-host readiness.");
     await waitForReady(`http://127.0.0.1:${config.ports.web}/readyz`, signal);
     console.log(`\nSpaceApp: http://127.0.0.1:${config.ports.web}\nOne-time owner setup token: ${secrets["setup-token"]}\nOptional browser/companion services are disabled. Ctrl+C or npm run dev:stack -- down stops this stack.`);
     await new Promise((resolve) => { if (signal.aborted) resolve(); else signal.addEventListener("abort", resolve, { once: true }); });
@@ -190,6 +194,10 @@ async function main() {
     await processes.stop();
     if (composeStarted) {
       const cleanup = new Processes({ secrets: Object.values(secrets) });
+      if (!controller.signal.aborted) {
+        // Preserve useful startup diagnostics before removing failed containers.
+        await cleanup.run("docker:diagnostics", "docker", composeArgs(config, "logs", "--no-color", "--tail", "100"), { cwd: config.state }).catch(() => {});
+      }
       try { await cleanup.run("docker:down", "docker", composeArgs(config, "down", "--remove-orphans"), { cwd: config.state }); }
       catch (error) { cleanupError = error; }
       finally { await cleanup.stop(); }

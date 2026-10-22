@@ -8,6 +8,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { setTimeout as delay } from "node:timers/promises";
 import { once } from "node:events";
+import { createInterface } from "node:readline";
 import WebSocket from "ws";
 import { configuration } from "./dev-stack/config.mjs";
 import { redact } from "./dev-stack/processes.mjs";
@@ -32,6 +33,12 @@ const child = spawn(process.execPath, [npmCli, "run", "dev:stack"], { cwd: root,
 const ended = new Promise(resolve => child.on("exit", (code) => { childExit = code; resolve(); }));
 child.stdout.on("data", data => { output = (output + data).slice(-2_000_000); });
 child.stderr.on("data", data => { output = (output + data).slice(-2_000_000); });
+for (const stream of [child.stdout, child.stderr]) {
+  createInterface({ input: stream }).on("line", line => {
+    // Forward only fixed launcher milestones; raw service logs remain buffered/redacted.
+    if (line.startsWith("[dev:stack] ")) console.log(line);
+  });
+}
 child.on("error", error => { output += error.message; childExit = 1; });
 
 async function until(check, description, timeout = 90_000) {
