@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { mkdtemp, mkdir, readFile, rm, stat, symlink, writeFile } from "node:fs/promises";
+import { copyFile, mkdtemp, mkdir, readFile, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { createServer } from "node:http";
@@ -104,16 +104,52 @@ test("a failed worker aborts supervision and real child groups are terminated", 
 });
 
 test("readiness requires ok:true rather than any HTTP response and respects abort", async () => {
-  let ready = false;
-  const server = createServer((req, res) => { res.setHeader("content-type", "application/json"); res.end(JSON.stringify({ ok: ready })); });
+  let status = { ok: false };
+  const server = createServer((req, res) => { res.setHeader("content-type", "application/json"); res.end(JSON.stringify(status)); });
   server.listen(0, "127.0.0.1"); await once(server, "listening");
   try {
     const url = `http://127.0.0.1:${server.address().port}/readyz`;
     await assert.rejects(waitForReady(url, new AbortController().signal, 30), /timeout/);
-    ready = true;
+    for (const dependencies of [undefined,
+      { database: "RUNNING", worker: "disabled", temporal: "disabled" },
+      { database: "RUNNING", worker: "STALE", temporal: "enabled" },
+      { database: "UNAVAILABLE", worker: "RUNNING", temporal: "enabled" }]) {
+      status = { ok: true, dependencies };
+      await assert.rejects(waitForReady(url, new AbortController().signal, 30), /timeout/);
+    }
+    status = { ok: true, dependencies: { database: "RUNNING", worker: "RUNNING", temporal: "enabled" } };
     await waitForReady(url, new AbortController().signal, 1000);
     const abort = new AbortController(); abort.abort(new Error("worker died"));
     await assert.rejects(waitForReady(url, abort.signal), /worker died/);
   } finally { server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); }
   assert.equal(redact("url: secret-value", ["secret-value"]), "url: [REDACTED]");
+});
+
+test("smoke cleanup resets resources even when the launcher has already failed", async (t) => {
+  const config = await fixture(t);
+  const scripts = join(config.root, "scripts");
+  await mkdir(join(scripts, "dev-stack"), { recursive: true });
+  for (const file of ["dev-stack-smoke.mjs", "dev-stack/config.mjs", "dev-stack/processes.mjs"]) {
+    await copyFile(new URL(`../${file}`, import.meta.url), join(scripts, file));
+  }
+  await symlink(new URL("../../node_modules", import.meta.url).pathname, join(config.root, "node_modules"));
+  const fakeNpm = join(config.root, "fake-npm.mjs");
+  await writeFile(fakeNpm, `
+    import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
+    if (process.argv.includes('reset')) {
+      rmSync('.dev-stack', { recursive: true, force: true });
+      writeFileSync('reset-proof', 'cleaned');
+    } else {
+      mkdirSync('.dev-stack');
+      process.exitCode = 9;
+    }
+  `);
+  const processes = new Processes({ output: () => {} });
+  try {
+    await assert.rejects(processes.run("smoke", process.execPath, [join(scripts, "dev-stack-smoke.mjs")], {
+      cwd: config.root, env: { ...process.env, npm_execpath: fakeNpm }
+    }), /exited unexpectedly \(1\)/);
+    assert.equal(await readFile(join(config.root, "reset-proof"), "utf8"), "cleaned");
+    await assert.rejects(stat(config.state), { code: "ENOENT" });
+  } finally { await processes.stop(); }
 });
