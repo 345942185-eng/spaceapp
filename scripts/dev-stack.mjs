@@ -5,7 +5,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { once } from "node:events";
 import { assertOwnedState, composeArgs, composeDocument, configuration, openCodePackage, prepareState, sourceEnvironment } from "./dev-stack/config.mjs";
-import { Processes, redact, waitForReady } from "./dev-stack/processes.mjs";
+import { Processes, redact, startWeb, waitForReady } from "./dev-stack/processes.mjs";
 
 const root = await realpath(join(dirname(fileURLToPath(import.meta.url)), ".."));
 const config = configuration(root);
@@ -182,7 +182,7 @@ async function main() {
     hostStarted = true;
     processes.start("worker", process.execPath, ["apps/worker/dist/worker.js"], { cwd: root, env }, true);
     processes.start("api", process.execPath, ["node_modules/tsx/dist/cli.mjs", "watch", "apps/api/src/server.ts"], { cwd: root, env }, true);
-    processes.start("web", process.execPath, ["node_modules/vite/bin/vite.js", "--strictPort"], { cwd: join(root, "apps/web"), env }, true);
+    startWeb(processes, root, env);
     await writeFile(join(config.state, "processes.json"), JSON.stringify([...processes.children].filter(r => !r.exited).map(r => ({ name: r.name, pid: r.child.pid }))), { mode: 0o600 });
     console.log("[dev:stack] Waiting for database, worker and CLI-host readiness.");
     await waitForReady(`http://127.0.0.1:${config.ports.web}/readyz`, signal);
