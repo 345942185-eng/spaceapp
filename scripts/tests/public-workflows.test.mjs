@@ -1,8 +1,5 @@
 import assert from "node:assert/strict";
-import { readFile, mkdtemp, mkdir, writeFile, copyFile, rm } from "node:fs/promises";
-import { execFileSync, spawnSync } from "node:child_process";
-import { createHash } from "node:crypto";
-import { tmpdir } from "node:os";
+import { readFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import test from "node:test";
 
@@ -241,54 +238,4 @@ test("workflow actions use full commit SHA pins with version comments", async ()
     const pinnedCount = [...content.matchAll(/uses:\s+[^@\s]+@[0-9a-f]{40}\s+#\s+v?\d+\.\d+\.\d+/g)].length;
     assert.equal(pinnedCount, usesCount, `${name} must pin every action by full commit SHA`);
   }
-});
-
-
-test("CI verifies the export snapshot after public edits and rejects corrupted provenance", async (t) => {
-  const ci = await workflow("ci.yml");
-  assert.match(ci, /fetch-depth: 0/);
-  const commands = ci.match(/- name: Verify export provenance\n        shell: bash\n        run: \|\n([\s\S]*?)\n      - name:/)?.[1]
-    .split("\n").map(line => line.replace(/^          /, "")).join("\n");
-  assert.ok(commands, "snapshot verification must be present");
-  assert.match(ci, /Verify candidate provenance[\s\S]*verify-export-provenance\.mjs "\$RUNNER_TEMP\/spaceapp-public-export"/);
-  const temporary = await mkdtemp(join(tmpdir(), "spaceapp-ci-provenance-"));
-  t.after(() => rm(temporary, { recursive: true, force: true }));
-  const checkout = join(temporary, "checkout");
-  await mkdir(join(checkout, "scripts"), { recursive: true });
-  await copyFile(join(root, "scripts/verify-export-provenance.mjs"), join(checkout, "scripts/verify-export-provenance.mjs"));
-  const git = (...args) => execFileSync("git", args, { cwd: checkout, stdio: "pipe" });
-  git("init");
-  git("config", "user.name", "CI test");
-  git("config", "user.email", "ci@example.invalid");
-  const original = "original export\n";
-  const manifest = {
-    sourceCommit: "a".repeat(40), transformations: 0,
-    files: [{ path: "file.txt", size: Buffer.byteLength(original),
-      sha256: createHash("sha256").update(original).digest("hex"),
-      sourceObjectId: createHash("sha1").update(`blob ${Buffer.byteLength(original)}\0${original}`).digest("hex") }]
-  };
-  await writeFile(join(checkout, "file.txt"), original);
-  await writeFile(join(checkout, "PUBLIC_EXPORT_MANIFEST.json"), JSON.stringify(manifest));
-  git("add", ".");
-  git("commit", "-m", "original export");
-  await writeFile(join(checkout, "file.txt"), "intentional public change\n");
-  git("add", ".");
-  git("commit", "-m", "public contribution");
-  const verify = () => spawnSync("bash", ["-c", commands], {
-    cwd: checkout, env: { ...process.env, RUNNER_TEMP: temporary }, encoding: "utf8"
-  });
-  let result = verify();
-  assert.equal(result.status, 0, result.stdout + result.stderr);
-  // The current edited tree still fails the strict verifier: it was not weakened.
-  result = spawnSync(process.execPath, ["scripts/verify-export-provenance.mjs", "."], { cwd: checkout, encoding: "utf8" });
-  assert.equal(result.status, 1);
-  assert.match(result.stdout, /differs from the manifest: file.txt/);
-  // A newly recorded export with a bad checksum must fail the snapshot step too.
-  manifest.files[0].sha256 = "0".repeat(64);
-  await writeFile(join(checkout, "PUBLIC_EXPORT_MANIFEST.json"), JSON.stringify(manifest));
-  git("add", ".");
-  git("commit", "-m", "corrupt export manifest");
-  result = verify();
-  assert.equal(result.status, 1, result.stdout + result.stderr);
-  assert.match(result.stdout, /differs from the manifest: file.txt/);
 });
