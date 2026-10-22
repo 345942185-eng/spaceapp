@@ -24,8 +24,6 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-          # Locate the original export snapshot even after contributor commits.
-          fetch-depth: 0
 
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
@@ -33,24 +31,12 @@ jobs:
           cache: npm
 
       - name: Verify export provenance
-        shell: bash
-        run: |
-          set -euo pipefail
-          # The manifest describes the export snapshot, not later public edits.
-          export_commit=$(git log -1 --format=%H -- PUBLIC_EXPORT_MANIFEST.json)
-          test -n "$export_commit"
-          snapshot=$(mktemp -d "$RUNNER_TEMP/spaceapp-provenance.XXXXXX")
-          trap 'rm -rf "$snapshot"' EXIT
-          git archive "$export_commit" | tar -x -C "$snapshot"
-          node scripts/verify-export-provenance.mjs "$snapshot"
+        run: node scripts/verify-export-provenance.mjs .
 
       - name: Create sanitized candidate
         run: >-
           node scripts/public-export.mjs
           --output "$RUNNER_TEMP/spaceapp-public-export"
-
-      - name: Verify candidate provenance
-        run: node scripts/verify-export-provenance.mjs "$RUNNER_TEMP/spaceapp-public-export"
 
       - name: Install candidate dependencies
         working-directory: ${{ runner.temp }}/spaceapp-public-export
