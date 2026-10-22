@@ -101,7 +101,7 @@ export function composeDocument(config, template) {
         ports: [`127.0.0.1:${config.ports.temporal}:7233`],
         secrets: ["postgres-password"], depends_on: { postgres: { condition: "service_healthy" } },
         healthcheck: {
-          test: ["CMD-SHELL", "temporal operator cluster health --address 127.0.0.1:7233 >/dev/null && temporal operator namespace describe --namespace default --address 127.0.0.1:7233 >/dev/null"],
+          test: ["CMD-SHELL", "temporal operator cluster health --address temporal:7233 >/dev/null && temporal operator namespace describe --namespace default --address temporal:7233 >/dev/null"],
           interval: "3s", timeout: "10s", retries: 60
         }
       }
