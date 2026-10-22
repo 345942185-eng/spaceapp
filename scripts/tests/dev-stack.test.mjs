@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { copyFile, mkdtemp, mkdir, readFile, rm, stat, symlink, writeFile } from "node:fs/promises";
+import { copyFile, mkdtemp, mkdir, readFile, realpath, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { createServer } from "node:http";
@@ -9,7 +9,8 @@ import { configuration, prepareState, assertOwnedState, composeDocument, sourceE
 import { Processes, redact, waitForReady } from "../dev-stack/processes.mjs";
 
 async function fixture(t) {
-  const root = await mkdtemp(join(tmpdir(), "space-dev-test-"));
+  // macOS exposes /var through /private/var; match the launcher's canonical root.
+  const root = await realpath(await mkdtemp(join(tmpdir(), "space-dev-test-")));
   t.after(() => rm(root, { recursive: true, force: true }));
   await mkdir(join(root, "starter-memory"));
   for (const name of ["space_memory.md", "space_memory_monthly.md", "installation-guide.md"]) await writeFile(join(root, "starter-memory", name), "starter");
