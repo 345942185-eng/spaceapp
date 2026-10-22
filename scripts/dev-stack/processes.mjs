@@ -72,7 +72,12 @@ export async function waitForReady(url, signal, timeoutMs = 180_000) {
     signal.throwIfAborted();
     try {
       const response = await fetch(url, { signal: AbortSignal.any([signal, AbortSignal.timeout(2000)]) });
-      if (response.ok && (await response.json()).ok === true) return;
+      if (response.ok) {
+        const status = await response.json();
+        if (status.ok === true && status.dependencies?.database === "RUNNING"
+          && status.dependencies?.worker === "RUNNING"
+          && status.dependencies?.temporal === "enabled") return;
+      }
     } catch (error) { if (signal.aborted) throw error; }
     await delay(500, undefined, { signal });
   }
