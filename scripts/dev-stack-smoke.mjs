@@ -2,7 +2,7 @@
 // Real Docker/Postgres/Temporal/API/PTY acceptance. Never falls back to a mock.
 import assert from "node:assert/strict";
 import { spawn, execFileSync } from "node:child_process";
-import { randomBytes } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
 import { lstat, readFile, realpath } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -97,7 +97,7 @@ try {
   const pane = await request("/api/panes", { roomId: starter.room.id, title: "OpenCode acceptance", mode: "TERMINAL", terminalRuntimeId: "cli:opencode" });
   const session = await request(`/api/panes/${encodeURIComponent(pane.id)}/cli/session`, { runtimeId: "cli:opencode" });
   assert.ok(session.websocket?.token);
-  const query = new URLSearchParams({ sessionId: session.session.sessionId, token: session.websocket.token, clientId: "dev-stack-smoke", initialCols: "100", initialRows: "30" });
+  const query = new URLSearchParams({ sessionId: session.session.sessionId, token: session.websocket.token, clientId: randomUUID(), initialCols: "100", initialRows: "30" });
   socket = new WebSocket(`${api.replace("http:", "ws:")}/api/panes/${encodeURIComponent(pane.id)}/cli/terminal?${query}`, { headers: { cookie, origin: api } });
   let terminal = "";
   let terminalError;
