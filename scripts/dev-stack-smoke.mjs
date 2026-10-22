@@ -3,7 +3,7 @@
 import assert from "node:assert/strict";
 import { spawn, execFileSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { readFile, realpath } from "node:fs/promises";
+import { lstat, readFile, realpath } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { setTimeout as delay } from "node:timers/promises";
@@ -71,6 +71,7 @@ function docker(args) {
 }
 
 let secrets = [];
+let failure;
 try {
   await until(async () => {
     try { const r = await fetch(`http://127.0.0.1:${config.ports.web}/readyz`, { signal: AbortSignal.timeout(2000) }); return r.ok && (await r.json()).ok === true; }
@@ -134,13 +135,28 @@ try {
 } catch (error) {
   // Setup tokens are deliberately printed by the interactive launcher. Never echo them in CI.
   console.error(redact(output, secrets).replace(/One-time owner setup token: \S+/g, "One-time owner setup token: [REDACTED]"));
-  throw error;
+  failure = error;
 } finally {
   socket?.terminate();
-  if (childExit === undefined) {
-    stopping = true;
+  stopping = true;
+  // A failed launcher can already have exited while retaining its Docker volume
+  // and private state. Cleanup must not depend on the launcher still being alive.
+  const stateExists = await lstat(config.state).then(() => true, error => {
+    if (error.code === "ENOENT") return false;
+    throw error;
+  });
+  if (stateExists) {
     try { execFileSync(process.execPath, [npmCli, "run", "dev:stack", "--", "reset"], { cwd: root, stdio: "pipe", timeout: 90_000 }); }
-    catch { child.kill("SIGTERM"); }
+    catch {
+      if (childExit === undefined) child.kill("SIGTERM");
+      const cleanupError = new Error("Dev-stack cleanup failed; inspect this checkout's .dev-stack state and Docker resources.");
+      console.error(cleanupError.message);
+      failure ??= cleanupError;
+    }
+  }
+  if (childExit === undefined) {
+    if (!stateExists) child.kill("SIGTERM");
     await Promise.race([ended, delay(10_000)]);
   }
 }
+if (failure) throw failure;
