@@ -5,7 +5,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { once } from "node:events";
 import { assertOwnedState, composeArgs, composeDocument, configuration, openCodePackage, prepareState, sourceEnvironment } from "./dev-stack/config.mjs";
-import { Processes, redact, startWeb, waitForReady } from "./dev-stack/processes.mjs";
+import { Processes, ensureMacNodePtySpawnHelper, redact, startWeb, waitForReady } from "./dev-stack/processes.mjs";
 
 const root = await realpath(join(dirname(fileURLToPath(import.meta.url)), ".."));
 const config = configuration(root);
@@ -167,6 +167,7 @@ async function main() {
     console.log("[dev:stack] Building source packages and installing pinned OpenCode.");
     await build(processes);
     await prepareOpenCode(processes);
+    await ensureMacNodePtySpawnHelper(root);
     signal.throwIfAborted();
     composeStarted = true;
     console.log("[dev:stack] Starting PostgreSQL and Temporal.");
