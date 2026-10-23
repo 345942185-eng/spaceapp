@@ -1,12 +1,12 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { copyFile, mkdtemp, mkdir, readFile, realpath, rm, stat, symlink, writeFile } from "node:fs/promises";
+import { chmod, copyFile, mkdtemp, mkdir, readFile, realpath, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { createServer } from "node:http";
 import { once } from "node:events";
 import { configuration, prepareState, assertOwnedState, composeDocument, sourceEnvironment, openCodePackage } from "../dev-stack/config.mjs";
-import { Processes, redact, waitForReady } from "../dev-stack/processes.mjs";
+import { Processes, ensureMacNodePtySpawnHelper, redact, waitForReady } from "../dev-stack/processes.mjs";
 
 async function fixture(t) {
   // macOS exposes /var through /private/var; match the launcher's canonical root.
@@ -153,4 +153,22 @@ test("smoke cleanup resets resources even when the launcher has already failed",
     assert.equal(await readFile(join(config.root, "reset-proof"), "utf8"), "cleaned");
     await assert.rejects(stat(config.state), { code: "ENOENT" });
   } finally { await processes.stop(); }
+});
+
+
+test("macOS node-pty spawn-helper repairs only the checkout dependency execute bit", async (t) => {
+  const config = await fixture(t);
+  const dir = join(config.root, "node_modules", "node-pty", "prebuilds", "darwin-x64");
+  const helper = join(dir, "spawn-helper");
+  await mkdir(dir, { recursive: true });
+  await writeFile(helper, "native helper fixture", { mode: 0o644 });
+  await chmod(helper, 0o644);
+  assert.equal(await ensureMacNodePtySpawnHelper(config.root, "linux", "x64"), false);
+  assert.equal((await stat(helper)).mode & 0o111, 0);
+  assert.equal(await ensureMacNodePtySpawnHelper(config.root, "darwin", "x64"), true);
+  assert.equal((await stat(helper)).mode & 0o111, 0o111);
+  assert.equal(await ensureMacNodePtySpawnHelper(config.root, "darwin", "x64"), false);
+  await rm(helper);
+  await symlink(join(config.root, "starter-memory", "space_memory.md"), helper);
+  await assert.rejects(ensureMacNodePtySpawnHelper(config.root, "darwin", "x64"), /symlinked/);
 });
