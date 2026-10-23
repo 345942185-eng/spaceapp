@@ -2,6 +2,21 @@ import { spawn } from "node:child_process";
 import { createInterface } from "node:readline";
 import { setTimeout as delay } from "node:timers/promises";
 import { join } from "node:path";
+import { chmod, lstat } from "node:fs/promises";
+
+// node-pty 1.1.0 may install macOS spawn-helper without its execute bit
+// (microsoft/node-pty#850). Repair the local dependency, not system files.
+export async function ensureMacNodePtySpawnHelper(root, platform = process.platform, arch = process.arch) {
+  if (platform !== "darwin") return false;
+  const helper = join(root, "node_modules", "node-pty", "prebuilds", `darwin-${arch}`, "spawn-helper");
+  const info = await lstat(helper);
+  if (!info.isFile() || info.isSymbolicLink()) {
+    throw new Error("Refusing invalid or symlinked node-pty spawn-helper.");
+  }
+  if ((info.mode & 0o111) !== 0) return false;
+  await chmod(helper, info.mode | 0o111);
+  return true;
+}
 
 export function startWeb(processes, root, env) {
   // npm workspaces hoists Vite to the checkout root, while its working
